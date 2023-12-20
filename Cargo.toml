@@ -1,9 +1,29 @@
 [package]
 name = "goggled"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
+homepage = "https://github.com/d-e-s-o/goggled"
+repository = "https://github.com/d-e-s-o/goggled.git"
 readme = "README.md"
+categories = [
+  "accessibility",
+  "api-bindings",
+  "asynchronous",
+  "command-line-utilities",
+  "os::unix-apis"
+]
+keywords = [
+  "async",
+  "dbus",
+  "desktop",
+  "linux",
+  "notification",
+]
+description = """
+A program/daemon sending notifications when the user should take a break
+from staring at the screen.
+"""
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
