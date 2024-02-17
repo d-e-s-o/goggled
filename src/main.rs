@@ -87,6 +87,7 @@ fn parse_duration(s: &str) -> Result<Duration> {
 /// A program/daemon sending notifications when the user should take a
 /// break from staring at the screen.
 #[derive(Debug, Parser)]
+#[clap(version = env!("VERSION"))]
 pub struct Args {
   /// The duration that, if the user has been "goggling" for this long,
   /// we post a notification.
