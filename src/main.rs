@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::env::var_os;
 use std::pin::pin;
 use std::ptr::null;
+use std::ptr::null_mut;
+use std::slice;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -30,7 +32,12 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt::time::ChronoLocal;
 use tracing_subscriber::FmtSubscriber;
 
+use x11_dl::xlib::Atom;
+use x11_dl::xlib::Success;
+use x11_dl::xlib::Window;
 use x11_dl::xlib::Xlib;
+use x11_dl::xlib::XA_ATOM;
+use x11_dl::xlib::XA_WINDOW;
 use x11_dl::xss::Xss as XScreenSaver;
 
 use zbus::export::futures_util::future::select;
@@ -245,9 +252,187 @@ fn query_idle_time() -> Result<Duration> {
 }
 
 
+/// Retrieve the currently active window.
+// For debugging matters, the result can be double checked from a shell
+// using `xprop -root 32x '\t$0' _NET_ACTIVE_WINDOW`.
+fn active_window() -> Result<Window> {
+  let xlib = Xlib::open().context("failed to open xlib API")?;
+
+  let display = unsafe { (xlib.XOpenDisplay)(null()) };
+  ensure!(!display.is_null(), "failed to open X display");
+
+  let only_if_exists = 0;
+  let property = unsafe {
+    (xlib.XInternAtom)(
+      display,
+      b"_NET_ACTIVE_WINDOW\0".as_slice().as_ptr().cast(),
+      only_if_exists,
+    )
+  };
+  ensure!(
+    property != 0,
+    "failed to retrieve X11 NET_ACTIVE_WINDOW atom"
+  );
+
+  let root = unsafe { (xlib.XDefaultRootWindow)(display) };
+
+  let offset = 0;
+  let length = 1;
+  let delete = 0;
+  let request_type = XA_WINDOW;
+  let mut type_return = 0 as Atom;
+  let mut format_return = 0;
+  let mut items_return = 0;
+  let mut bytes_left = 0;
+  let mut data = null_mut();
+
+  let result = unsafe {
+    (xlib.XGetWindowProperty)(
+      display,
+      root,
+      property,
+      offset,
+      length,
+      delete,
+      request_type,
+      &mut type_return,
+      &mut format_return,
+      &mut items_return,
+      &mut bytes_left,
+      &mut data,
+    )
+  };
+  ensure!(
+    result == Success.into(),
+    "failed to retrieve X11 window property"
+  );
+  ensure!(
+    type_return == XA_WINDOW,
+    "XGetWindowProperty returned unexpected property: {type_return}"
+  );
+  ensure!(
+    format_return == u32::BITS as _,
+    "XGetWindowProperty returned unexpected format: {format_return}"
+  );
+  ensure!(
+    items_return == 1,
+    "XGetWindowProperty returned unexpected number of items: {items_return}"
+  );
+  ensure!(
+    bytes_left == 0,
+    "XGetWindowProperty performed partial read ({bytes_left} bytes left)"
+  );
+  ensure!(!data.is_null(), "XGetWindowProperty return no data");
+
+  let window = unsafe { *data.cast::<Window>() };
+  let _result = unsafe { (xlib.XFree)(data.cast()) };
+
+  Ok(window)
+}
+
+
+fn is_fullscreen(window: Window) -> Result<bool> {
+  let xlib = Xlib::open().context("failed to open xlib API")?;
+
+  let display = unsafe { (xlib.XOpenDisplay)(null()) };
+  ensure!(!display.is_null(), "failed to open X display");
+
+  let only_if_exists = 0;
+  let fullscreen = unsafe {
+    (xlib.XInternAtom)(
+      display,
+      b"_NET_WM_STATE_FULLSCREEN\0".as_slice().as_ptr().cast(),
+      only_if_exists,
+    )
+  };
+  ensure!(
+    fullscreen != 0,
+    "failed to retrieve X11 NET_WM_STATE_FULLSCREEN atom"
+  );
+
+  let property = unsafe {
+    (xlib.XInternAtom)(
+      display,
+      b"_NET_WM_STATE\0".as_slice().as_ptr().cast(),
+      only_if_exists,
+    )
+  };
+  ensure!(property != 0, "failed to retrieve X11 NET_WM_STATE atom");
+
+  // TODO: We should probably support invoking `XGetWindowProperty` in a
+  //       loop to work with <1024 elements at a time while having no
+  //       upper limit.
+  let offset = 0;
+  // Maximum number of properties/hints we may retrieve.
+  let length = 1024;
+  let delete = 0;
+  let request_type = XA_ATOM;
+  let mut type_return = 0 as Atom;
+  let mut format_return = 0;
+  let mut items_return = 0;
+  let mut bytes_left = 0;
+  let mut data = null_mut();
+
+  let result = unsafe {
+    (xlib.XGetWindowProperty)(
+      display,
+      window,
+      property,
+      offset,
+      length,
+      delete,
+      request_type,
+      &mut type_return,
+      &mut format_return,
+      &mut items_return,
+      &mut bytes_left,
+      &mut data,
+    )
+  };
+  ensure!(
+    result == Success.into(),
+    "failed to retrieve X11 window property"
+  );
+
+  if type_return == 0 {
+    // If the _NET_WM_STATE atom doesn't exist at all,
+    // `XGetWindowProperty` returns `Success` and sets the return type
+    // to 0. For us, that is enough to conclude that the window is not
+    // in fullscreen mode.
+    return Ok(false)
+  }
+
+  ensure!(
+    type_return == XA_ATOM,
+    "XGetWindowProperty returned unexpected property: {type_return}"
+  );
+  ensure!(
+    bytes_left == 0,
+    "XGetWindowProperty performed partial read ({bytes_left} bytes left)"
+  );
+  ensure!(!data.is_null(), "XGetWindowProperty return no data");
+
+  let hints = unsafe { slice::from_raw_parts(data.cast::<Atom>(), items_return as _) };
+  let fullscreen = hints.iter().any(|hint| *hint == fullscreen);
+
+  let _result = unsafe { (xlib.XFree)(data.cast()) };
+
+  Ok(fullscreen)
+}
+
+
+/// Check whether an application is active in fullscreen mode.
+fn fullscreen_app_active() -> Result<bool> {
+  let window = active_window()?;
+  let fullscreen = is_fullscreen(window)?;
+  trace!("active window is {window:#x} (fullscreen: {fullscreen})");
+  Ok(fullscreen)
+}
+
+
 async fn check_once(args: &Args, mut goggling_since: Instant) -> Result<Instant> {
   let idle = query_idle_time()?;
-  if idle > args.idle_reset_duration {
+  if idle > args.idle_reset_duration || fullscreen_app_active()? {
     goggling_since = Instant::now();
     debug!("reset goggle time");
   } else if Instant::now() > goggling_since + args.goggle_duration {
