@@ -3,6 +3,7 @@
 use std::cmp::min;
 use std::collections::HashMap;
 use std::env::var_os;
+use std::ffi::CStr;
 use std::pin::pin;
 use std::ptr::null;
 use std::ptr::null_mut;
@@ -24,6 +25,7 @@ use clap::Parser;
 use tokio::time::sleep;
 
 use tracing::debug;
+use tracing::error;
 use tracing::subscriber::set_global_default as set_global_subscriber;
 use tracing::trace;
 use tracing::warn;
@@ -33,8 +35,10 @@ use tracing_subscriber::fmt::time::ChronoLocal;
 use tracing_subscriber::FmtSubscriber;
 
 use x11_dl::xlib::Atom;
+use x11_dl::xlib::Display;
 use x11_dl::xlib::Success;
 use x11_dl::xlib::Window;
+use x11_dl::xlib::XErrorEvent;
 use x11_dl::xlib::Xlib;
 use x11_dl::xlib::XA_ATOM;
 use x11_dl::xlib::XA_WINDOW;
@@ -430,6 +434,52 @@ fn fullscreen_app_active() -> Result<bool> {
 }
 
 
+fn init_xlib_error_handler() -> Result<()> {
+  extern "C" fn error_handler(display: *mut Display, event: *mut XErrorEvent) -> i32 {
+    let xlib = Xlib::open().context("failed to open xlib API").unwrap();
+    // TODO: Should use `MaybeUninit` here.
+    let mut buf = [0u8; 1024];
+    let event = unsafe { &*event };
+    let _result = unsafe {
+      (xlib.XGetErrorText)(
+        display,
+        event.error_code.into(),
+        buf.as_mut_slice().as_mut_ptr().cast(),
+        buf.len() as _,
+      )
+    };
+
+    let err = CStr::from_bytes_until_nul(&buf)
+      .ok()
+      .map(CStr::to_string_lossy);
+    error!(
+      r#"X Error of failed request:  {err}
+    Major opcode of failed request:  {major}
+    Resource id in failed request:  {resid:#x}
+    Serial number of failed request:  {serial}"#,
+      err = err.unwrap_or_default(),
+      major = event.request_code,
+      resid = event.resourceid,
+      serial = event.serial
+    );
+
+    0
+  }
+
+  extern "C" fn io_error_handler(_display: *mut Display) -> i32 {
+    error!("encountered X I/O error");
+    0
+  }
+
+  let xlib = Xlib::open().context("failed to open xlib API")?;
+
+  let _prev = unsafe { (xlib.XSetErrorHandler)(Some(error_handler)) };
+  let _prev = unsafe { (xlib.XSetIOErrorHandler)(Some(io_error_handler)) };
+
+  Ok(())
+}
+
+
 async fn check_once(args: &Args, mut goggling_since: Instant) -> Result<Instant> {
   let idle = query_idle_time()?;
   if idle > args.idle_reset_duration || fullscreen_app_active()? {
@@ -470,6 +520,8 @@ async fn main() -> Result<()> {
     let () =
       set_global_subscriber(subscriber).with_context(|| "failed to set tracing subscriber")?;
   };
+
+  let () = init_xlib_error_handler()?;
 
   debug!(
     "using goggle duration of {:?} and idle reset {:?}",
