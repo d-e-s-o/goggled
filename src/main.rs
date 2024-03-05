@@ -52,7 +52,9 @@ use zbus::export::futures_util::StreamExt as _;
 use zbus::fdo::DBusProxy;
 use zbus::names::WellKnownName;
 use zbus::zvariant::Value;
+use zbus::Address;
 use zbus::Connection;
+use zbus::ConnectionBuilder;
 use zbus::MatchRule;
 use zbus::MessageStream;
 use zbus::MessageType;
@@ -138,9 +140,13 @@ async fn send_notification() -> Result<()> {
   // Never.
   let timeout = 0i32;
 
-  let connection = Connection::session()
+  let address = Address::session().context("failed to get D-Bus session address")?;
+  let connection = ConnectionBuilder::address(address.clone())
+    .with_context(|| format!("failed to create connection builder for address {address}"))?
+    .build()
     .await
-    .context("failed to establish D-Bus session connection")?;
+    .with_context(|| format!("failed to establish D-Bus session connection to {address}"))?;
+
   let bus = WellKnownName::from_static_str_unchecked("org.freedesktop.Notifications");
   let destination = Some(bus);
   let path = "/org/freedesktop/Notifications";
