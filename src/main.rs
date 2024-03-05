@@ -7,6 +7,7 @@ use std::ffi::CStr;
 use std::pin::pin;
 use std::ptr::null;
 use std::ptr::null_mut;
+use std::ptr::NonNull;
 use std::slice;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
@@ -94,6 +95,34 @@ pub struct Args {
   /// Increase verbosity (can be supplied multiple times).
   #[clap(short = 'v', long = "verbose", global = true, action = ArgAction::Count)]
   pub verbosity: u8,
+}
+
+
+struct OpenDisplay<'xlib> {
+  /// The `Xlib` instance we work with.
+  xlib: &'xlib Xlib,
+  /// The opened display.
+  display: NonNull<Display>,
+}
+
+impl<'xlib> OpenDisplay<'xlib> {
+  fn new(xlib: &'xlib Xlib) -> Result<Self> {
+    let display = unsafe { (xlib.XOpenDisplay)(null()) };
+    let display = NonNull::new(display).context("failed to open X display")?;
+
+    let slf = Self { xlib, display };
+    Ok(slf)
+  }
+
+  fn as_ptr(&self) -> *mut Display {
+    self.display.as_ptr()
+  }
+}
+
+impl Drop for OpenDisplay<'_> {
+  fn drop(&mut self) {
+    let _result = unsafe { (self.xlib.XCloseDisplay)(self.display.as_ptr()) };
+  }
 }
 
 
@@ -233,9 +262,7 @@ async fn wait_for_action_signal(connection: &Connection, interface: &str, id: u3
 
 fn query_idle_time() -> Result<Duration> {
   let xlib = Xlib::open().context("failed to open xlib API")?;
-
-  let display = unsafe { (xlib.XOpenDisplay)(null()) };
-  ensure!(!display.is_null(), "failed to open X display");
+  let display = OpenDisplay::new(&xlib)?;
 
   let xss = XScreenSaver::open().context("failed to open xscreensaver API")?;
   let info = unsafe { (xss.XScreenSaverAllocInfo)() };
@@ -243,8 +270,8 @@ fn query_idle_time() -> Result<Duration> {
     !info.is_null(),
     "XScreenSaverAllocInfo failed to allocate memory"
   );
-  let root = unsafe { (xlib.XDefaultRootWindow)(display) };
-  let result = unsafe { (xss.XScreenSaverQueryInfo)(display, root, info) };
+  let root = unsafe { (xlib.XDefaultRootWindow)(display.as_ptr()) };
+  let result = unsafe { (xss.XScreenSaverQueryInfo)(display.as_ptr(), root, info) };
   ensure!(result != 0, "failed to query screen saver information");
 
   let idle_ms = unsafe { (*info).idle };
@@ -261,14 +288,12 @@ fn query_idle_time() -> Result<Duration> {
 // using `xprop -root 32x '\t$0' _NET_ACTIVE_WINDOW`.
 fn active_window() -> Result<Window> {
   let xlib = Xlib::open().context("failed to open xlib API")?;
-
-  let display = unsafe { (xlib.XOpenDisplay)(null()) };
-  ensure!(!display.is_null(), "failed to open X display");
+  let display = OpenDisplay::new(&xlib)?;
 
   let only_if_exists = 0;
   let property = unsafe {
     (xlib.XInternAtom)(
-      display,
+      display.as_ptr(),
       b"_NET_ACTIVE_WINDOW\0".as_slice().as_ptr().cast(),
       only_if_exists,
     )
@@ -278,7 +303,7 @@ fn active_window() -> Result<Window> {
     "failed to retrieve X11 NET_ACTIVE_WINDOW atom"
   );
 
-  let root = unsafe { (xlib.XDefaultRootWindow)(display) };
+  let root = unsafe { (xlib.XDefaultRootWindow)(display.as_ptr()) };
 
   let offset = 0;
   let length = 1;
@@ -292,7 +317,7 @@ fn active_window() -> Result<Window> {
 
   let result = unsafe {
     (xlib.XGetWindowProperty)(
-      display,
+      display.as_ptr(),
       root,
       property,
       offset,
@@ -337,14 +362,12 @@ fn active_window() -> Result<Window> {
 
 fn is_fullscreen(window: Window) -> Result<bool> {
   let xlib = Xlib::open().context("failed to open xlib API")?;
-
-  let display = unsafe { (xlib.XOpenDisplay)(null()) };
-  ensure!(!display.is_null(), "failed to open X display");
+  let display = OpenDisplay::new(&xlib)?;
 
   let only_if_exists = 0;
   let fullscreen = unsafe {
     (xlib.XInternAtom)(
-      display,
+      display.as_ptr(),
       b"_NET_WM_STATE_FULLSCREEN\0".as_slice().as_ptr().cast(),
       only_if_exists,
     )
@@ -356,7 +379,7 @@ fn is_fullscreen(window: Window) -> Result<bool> {
 
   let property = unsafe {
     (xlib.XInternAtom)(
-      display,
+      display.as_ptr(),
       b"_NET_WM_STATE\0".as_slice().as_ptr().cast(),
       only_if_exists,
     )
@@ -379,7 +402,7 @@ fn is_fullscreen(window: Window) -> Result<bool> {
 
   let result = unsafe {
     (xlib.XGetWindowProperty)(
-      display,
+      display.as_ptr(),
       window,
       property,
       offset,
