@@ -128,6 +128,26 @@ impl Drop for OpenDisplay<'_> {
 }
 
 
+struct XGuard<'xlib, T> {
+  /// The `Xlib` instance we work with.
+  xlib: &'xlib Xlib,
+  /// The data being guarded.
+  data: *mut T,
+}
+
+impl<'xlib, T> XGuard<'xlib, T> {
+  fn new(xlib: &'xlib Xlib, data: *mut T) -> Self {
+    Self { xlib, data }
+  }
+}
+
+impl<T> Drop for XGuard<'_, T> {
+  fn drop(&mut self) {
+    let _result = unsafe { (self.xlib.XFree)(self.data.cast()) };
+  }
+}
+
+
 // https://specifications.freedesktop.org/notification-spec/notification-spec-latest.html
 async fn send_notification() -> Result<()> {
   let appname = env!("CARGO_BIN_NAME");
@@ -276,15 +296,16 @@ fn query_idle_time() -> Result<Duration> {
     !info.is_null(),
     "XScreenSaverAllocInfo failed to allocate memory"
   );
+  let _guard = XGuard::new(&xlib, info);
+
   let root = unsafe { (xlib.XDefaultRootWindow)(display.as_ptr()) };
   let result = unsafe { (xss.XScreenSaverQueryInfo)(display.as_ptr(), root, info) };
   ensure!(result != 0, "failed to query screen saver information");
 
   let idle_ms = unsafe { (*info).idle };
-  let _result = unsafe { (xlib.XFree)(info.cast()) };
-
   let idle = Duration::from_millis(idle_ms);
   trace!("idle time is {idle:?}");
+
   Ok(idle)
 }
 
@@ -341,6 +362,9 @@ fn active_window() -> Result<Window> {
     result == Success.into(),
     "failed to retrieve X11 window property"
   );
+  ensure!(!data.is_null(), "XGetWindowProperty return no data");
+  let _guard = XGuard::new(&xlib, data);
+
   ensure!(
     type_return == XA_WINDOW,
     "XGetWindowProperty returned unexpected property: {type_return}"
@@ -357,10 +381,8 @@ fn active_window() -> Result<Window> {
     bytes_left == 0,
     "XGetWindowProperty performed partial read ({bytes_left} bytes left)"
   );
-  ensure!(!data.is_null(), "XGetWindowProperty return no data");
 
   let window = unsafe { *data.cast::<Window>() };
-  let _result = unsafe { (xlib.XFree)(data.cast()) };
 
   Ok(window)
 }
@@ -435,6 +457,9 @@ fn is_fullscreen(window: Window) -> Result<bool> {
     return Ok(false)
   }
 
+  ensure!(!data.is_null(), "XGetWindowProperty return no data");
+  let _guard = XGuard::new(&xlib, data);
+
   ensure!(
     type_return == XA_ATOM,
     "XGetWindowProperty returned unexpected property: {type_return}"
@@ -443,12 +468,9 @@ fn is_fullscreen(window: Window) -> Result<bool> {
     bytes_left == 0,
     "XGetWindowProperty performed partial read ({bytes_left} bytes left)"
   );
-  ensure!(!data.is_null(), "XGetWindowProperty return no data");
 
   let hints = unsafe { slice::from_raw_parts(data.cast::<Atom>(), items_return as _) };
   let fullscreen = hints.iter().any(|hint| *hint == fullscreen);
-
-  let _result = unsafe { (xlib.XFree)(data.cast()) };
 
   Ok(fullscreen)
 }
