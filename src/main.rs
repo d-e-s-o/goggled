@@ -545,6 +545,22 @@ async fn check_once(args: &Args, mut goggling_since: Instant) -> Result<Instant>
 }
 
 
+async fn run(args: &Args) -> ! {
+  let mut goggling_since = Instant::now();
+  debug!("started goggle time tracking");
+  let sleep_duration = min(args.goggle_duration, args.idle_reset_duration) / 3;
+
+  loop {
+    let () = sleep(sleep_duration).await;
+
+    match check_once(args, goggling_since).await {
+      Ok(goggling) => goggling_since = goggling,
+      Err(err) => warn!("{err:#}"),
+    }
+  }
+}
+
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
   let args = Args::parse();
@@ -579,18 +595,7 @@ async fn main() -> Result<()> {
     args.goggle_duration, args.idle_reset_duration
   );
 
-  let mut goggling_since = Instant::now();
-  debug!("started goggle time tracking");
-  let sleep_duration = min(args.goggle_duration, args.idle_reset_duration) / 3;
-
-  loop {
-    let () = sleep(sleep_duration).await;
-
-    match check_once(&args, goggling_since).await {
-      Ok(goggling) => goggling_since = goggling,
-      Err(err) => warn!("{err:#}"),
-    }
-  }
+  run(&args).await
 }
 
 
