@@ -531,7 +531,10 @@ fn init_xlib_error_handler() -> Result<()> {
 }
 
 
-async fn check_once(args: &Args, mut goggling_since: Instant) -> Result<Instant> {
+async fn run_once(args: &Args, mut goggling_since: Instant) -> Result<Instant> {
+  let sleep_duration = min(args.goggle_duration, args.idle_reset_duration) / 3;
+  let () = sleep(sleep_duration).await;
+
   let idle = query_idle_time()?;
   if idle > args.idle_reset_duration || fullscreen_app_active()? {
     goggling_since = Instant::now();
@@ -548,12 +551,9 @@ async fn check_once(args: &Args, mut goggling_since: Instant) -> Result<Instant>
 async fn run(args: &Args) -> ! {
   let mut goggling_since = Instant::now();
   debug!("started goggle time tracking");
-  let sleep_duration = min(args.goggle_duration, args.idle_reset_duration) / 3;
 
   loop {
-    let () = sleep(sleep_duration).await;
-
-    match check_once(args, goggling_since).await {
+    match run_once(args, goggling_since).await {
       Ok(goggling) => goggling_since = goggling,
       Err(err) => warn!("{err:#}"),
     }
