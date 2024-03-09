@@ -12,7 +12,6 @@ use std::slice;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use std::time::Instant;
 
 use anyhow::anyhow;
 use anyhow::ensure;
@@ -531,30 +530,31 @@ fn init_xlib_error_handler() -> Result<()> {
 }
 
 
-async fn run_once(args: &Args, mut goggling_since: Instant) -> Result<Instant> {
+async fn run_once(args: &Args, mut goggling_for: Duration) -> Result<Duration> {
   let sleep_duration = min(args.goggle_duration, args.idle_reset_duration) / 3;
   let () = sleep(sleep_duration).await;
 
+  goggling_for += sleep_duration;
+
   let idle = query_idle_time()?;
   if idle > args.idle_reset_duration || fullscreen_app_active()? {
-    goggling_since = Instant::now();
+    goggling_for = Duration::from_secs(0);
     debug!("reset goggle time");
-  } else if Instant::now() > goggling_since + args.goggle_duration {
+  } else if goggling_for > args.goggle_duration {
     let () = send_notification().await?;
-    goggling_since = Instant::now();
+    goggling_for = Duration::from_secs(0);
   }
 
-  Ok(goggling_since)
+  Ok(goggling_for)
 }
 
 
 async fn run(args: &Args) -> ! {
-  let mut goggling_since = Instant::now();
-  debug!("started goggle time tracking");
+  let mut goggling_for = Duration::from_secs(0);
 
   loop {
-    match run_once(args, goggling_since).await {
-      Ok(goggling) => goggling_since = goggling,
+    match run_once(args, goggling_for).await {
+      Ok(goggling) => goggling_for = goggling,
       Err(err) => warn!("{err:#}"),
     }
   }
