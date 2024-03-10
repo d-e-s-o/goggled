@@ -530,32 +530,49 @@ fn init_xlib_error_handler() -> Result<()> {
 }
 
 
-async fn run_once(args: &Args, mut goggling_for: Duration) -> Result<Duration> {
-  let sleep_duration = min(args.goggle_duration, args.idle_reset_duration) / 3;
-  let () = sleep(sleep_duration).await;
-
-  goggling_for += sleep_duration;
-
-  let idle = query_idle_time()?;
-  if idle > args.idle_reset_duration || fullscreen_app_active()? {
-    goggling_for = Duration::from_secs(0);
-    debug!("reset goggle time");
-  } else if goggling_for > args.goggle_duration {
-    let () = send_notification().await?;
-    goggling_for = Duration::from_secs(0);
-  }
-
-  Ok(goggling_for)
+struct Daemon {
+  /// The duration that, if the user has been "goggling" for this long,
+  /// we post a notification.
+  goggle_duration: Duration,
+  /// The duration that, if the system has been idle for this long, we
+  /// reset the "goggling" duration.
+  idle_reset_duration: Duration,
+  /// The time for which the user was determined to have been goggling.
+  goggling_for: Duration,
 }
 
+impl Daemon {
+  fn new(goggle_duration: Duration, idle_reset_duration: Duration) -> Self {
+    Self {
+      goggle_duration,
+      idle_reset_duration,
+      goggling_for: Duration::from_secs(0),
+    }
+  }
 
-async fn run(args: &Args) -> ! {
-  let mut goggling_for = Duration::from_secs(0);
+  async fn run_once(&mut self) -> Result<()> {
+    let sleep_duration = min(self.goggle_duration, self.idle_reset_duration) / 3;
+    let () = sleep(sleep_duration).await;
 
-  loop {
-    match run_once(args, goggling_for).await {
-      Ok(goggling) => goggling_for = goggling,
-      Err(err) => warn!("{err:#}"),
+    self.goggling_for += sleep_duration;
+
+    let idle = query_idle_time()?;
+    if idle > self.idle_reset_duration || fullscreen_app_active()? {
+      self.goggling_for = Duration::from_secs(0);
+      debug!("reset goggle time");
+    } else if self.goggling_for > self.goggle_duration {
+      let () = send_notification().await?;
+      self.goggling_for = Duration::from_secs(0);
+    }
+
+    Ok(())
+  }
+
+  async fn run(&mut self) -> ! {
+    loop {
+      if let Err(err) = self.run_once().await {
+        warn!("{err:#}")
+      }
     }
   }
 }
@@ -595,7 +612,8 @@ async fn main() -> Result<()> {
     args.goggle_duration, args.idle_reset_duration
   );
 
-  run(&args).await
+  let mut daemon = Daemon::new(args.goggle_duration, args.idle_reset_duration);
+  daemon.run().await
 }
 
 
