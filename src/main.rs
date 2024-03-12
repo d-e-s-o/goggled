@@ -554,15 +554,17 @@ impl Daemon {
     let sleep_duration = min(self.goggle_duration, self.idle_reset_duration) / 3;
     let () = sleep(sleep_duration).await;
 
-    self.goggling_for += sleep_duration;
-
     let idle = query_idle_time()?;
-    if idle > self.idle_reset_duration || fullscreen_app_active()? {
+    if idle > self.idle_reset_duration {
       self.goggling_for = Duration::from_secs(0);
       debug!("reset goggle time");
-    } else if self.goggling_for > self.goggle_duration {
-      let () = send_notification().await?;
-      self.goggling_for = Duration::from_secs(0);
+    } else if !fullscreen_app_active()? {
+      self.goggling_for += sleep_duration;
+
+      if self.goggling_for > self.goggle_duration {
+        let () = send_notification().await?;
+        self.goggling_for = Duration::from_secs(0);
+      }
     }
 
     Ok(())
