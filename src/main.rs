@@ -312,7 +312,7 @@ fn query_idle_time() -> Result<Duration> {
 /// Retrieve the currently active window.
 // For debugging matters, the result can be double checked from a shell
 // using `xprop -root 32x '\t$0' _NET_ACTIVE_WINDOW`.
-fn active_window() -> Result<Window> {
+fn active_window() -> Result<Option<Window>> {
   let xlib = Xlib::open().context("failed to open xlib API")?;
   let display = OpenDisplay::new(&xlib)?;
 
@@ -382,7 +382,8 @@ fn active_window() -> Result<Window> {
   );
 
   let window = unsafe { *data.cast::<Window>() };
-
+  // If no window is active the result is 0x0.
+  let window = if window != 0x0 { Some(window) } else { None };
   Ok(window)
 }
 
@@ -475,15 +476,6 @@ fn is_fullscreen(window: Window) -> Result<bool> {
 }
 
 
-/// Check whether an application is active in fullscreen mode.
-fn fullscreen_app_active() -> Result<bool> {
-  let window = active_window()?;
-  let fullscreen = is_fullscreen(window)?;
-  trace!("active window is {window:#x} (fullscreen: {fullscreen})");
-  Ok(fullscreen)
-}
-
-
 fn init_xlib_error_handler() -> Result<()> {
   extern "C" fn error_handler(display: *mut Display, event: *mut XErrorEvent) -> i32 {
     let xlib = Xlib::open().context("failed to open xlib API").unwrap();
@@ -558,12 +550,29 @@ impl Daemon {
     if idle > self.idle_reset_duration {
       self.goggling_for = Duration::from_secs(0);
       debug!("reset goggle time");
-    } else if !fullscreen_app_active()? {
-      self.goggling_for += sleep_duration;
+    } else {
+      let paused = if let Some(window) = active_window()? {
+        let fullscreen = is_fullscreen(window)?;
+        trace!("active window is {window:#x} (fullscreen: {fullscreen})");
+        // When in fullscreen mode we pause advancing the goggle time
+        // until the next check.
+        fullscreen
+      } else {
+        trace!("no active window found");
+        // No active window means we pause advancing the goggle time
+        // until the next check, assuming we actually were idle for a
+        // little while (to weed out cases where the user may just have
+        // momentarily have no window active).
+        idle >= sleep_duration / 3
+      };
 
-      if self.goggling_for > self.goggle_duration {
-        let () = send_notification().await?;
-        self.goggling_for = Duration::from_secs(0);
+      if !paused {
+        self.goggling_for += sleep_duration;
+
+        if self.goggling_for > self.goggle_duration {
+          let () = send_notification().await?;
+          self.goggling_for = Duration::from_secs(0);
+        }
       }
     }
 
