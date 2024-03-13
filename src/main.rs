@@ -569,7 +569,10 @@ impl Daemon {
       if !paused {
         self.goggling_for += sleep_duration;
 
-        if self.goggling_for > self.goggle_duration {
+        // We hit the goggle time. But we only send a notification if
+        // the user has not been idle for one full interval, as there
+        // is no point in notifying a user not present.
+        if self.goggling_for > self.goggle_duration && idle < sleep_duration {
           let () = send_notification().await?;
           self.goggling_for = Duration::from_secs(0);
         }
