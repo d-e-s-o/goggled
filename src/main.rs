@@ -4,6 +4,9 @@ use std::cmp::min;
 use std::collections::HashMap;
 use std::env::var_os;
 use std::ffi::CStr;
+use std::fmt::Debug;
+use std::fmt::Formatter;
+use std::fmt::Result as FmtResult;
 use std::pin::pin;
 use std::ptr::null;
 use std::ptr::null_mut;
@@ -26,6 +29,8 @@ use tokio::time::sleep;
 
 use tracing::debug;
 use tracing::error;
+use tracing::field::debug;
+use tracing::field::DebugValue;
 use tracing::subscriber::set_global_default as set_global_subscriber;
 use tracing::trace;
 use tracing::warn;
@@ -259,11 +264,10 @@ async fn wait_for_action_signal(connection: &Connection, interface: &str, id: u3
         .context("failed to get D-Bus message header member")?
       {
         Some(name) if name == "ActionInvoked" => {
-          let (nid, action) = message
+          let (nid, _action) = message
             .body::<(u32, String)>()
             .context("failed to deserialize D-Bus message body")?;
           if nid == id {
-            trace!(id, "notification action `{action}` invoked");
             break
           }
         },
@@ -272,7 +276,6 @@ async fn wait_for_action_signal(connection: &Connection, interface: &str, id: u3
             .body::<(u32, u32)>()
             .context("failed to deserialize D-Bus message body")?;
           if nid == id {
-            trace!(id, "notification message closed");
             break
           }
         },
@@ -303,8 +306,6 @@ fn query_idle_time() -> Result<Duration> {
 
   let idle_ms = unsafe { (*info).idle };
   let idle = Duration::from_millis(idle_ms);
-  trace!("idle time is {idle:?}");
-
   Ok(idle)
 }
 
@@ -522,6 +523,26 @@ fn init_xlib_error_handler() -> Result<()> {
 }
 
 
+/// A type for displaying the value of a [`Window`].
+struct DebugWindow {
+  window: Option<Window>,
+}
+
+impl Debug for DebugWindow {
+  fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+    match self.window {
+      None => f.write_str("none"),
+      Some(window) => f.write_fmt(format_args!("{:#x}", window)),
+    }
+  }
+}
+
+
+fn debug_window(window: Option<Window>) -> DebugValue<DebugWindow> {
+  debug(DebugWindow { window })
+}
+
+
 struct Daemon {
   /// The duration that, if the user has been "goggling" for this long,
   /// we post a notification.
@@ -547,18 +568,22 @@ impl Daemon {
     let () = sleep(sleep_duration).await;
 
     let idle = query_idle_time()?;
+    trace!(idle_time = ?idle);
+
     if idle > self.idle_reset_duration {
       self.goggling_for = Duration::from_secs(0);
-      debug!("reset goggle time");
+      trace!("reset goggle time");
     } else {
-      let paused = if let Some(window) = active_window()? {
+      let window = active_window()?;
+      trace!(active_window = debug_window(window));
+
+      let paused = if let Some(window) = window {
         let fullscreen = is_fullscreen(window)?;
-        trace!("active window is {window:#x} (fullscreen: {fullscreen})");
+        trace!(fullscreen);
         // When in fullscreen mode we pause advancing the goggle time
         // until the next check.
         fullscreen
       } else {
-        trace!("no active window found");
         // No active window means we pause advancing the goggle time
         // until the next check, assuming we actually were idle for a
         // little while (to weed out cases where the user may just have
@@ -569,16 +594,21 @@ impl Daemon {
       if !paused {
         self.goggling_for += sleep_duration;
 
-        // We hit the goggle time. But we only send a notification if
-        // the user has not been idle for one full interval, as there
-        // is no point in notifying a user not present.
-        if self.goggling_for > self.goggle_duration && idle < sleep_duration {
-          let () = send_notification().await?;
-          self.goggling_for = Duration::from_secs(0);
+        if self.goggling_for > self.goggle_duration {
+          // We hit the goggle time. But we only send a notification if
+          // the user has not been idle for one full interval, as there
+          // is no point in notifying a user not present.
+          if idle < sleep_duration {
+            let () = send_notification().await?;
+            self.goggling_for = Duration::from_secs(0);
+          } else {
+            trace!("user seems idle; not notifying right now");
+          }
         }
       }
     }
 
+    debug!(goggle_time = ?self.goggling_for);
     Ok(())
   }
 
