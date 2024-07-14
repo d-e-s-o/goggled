@@ -4,5 +4,7 @@
 goggled
 =======
 
+- [Changelog](CHANGELOG.md)
+
 A program/daemon sending notifications when the user should take a break
 from staring at the screen.

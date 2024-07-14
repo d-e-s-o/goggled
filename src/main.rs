@@ -197,7 +197,8 @@ async fn send_notification() -> Result<()> {
       )
       .await
       .with_context(|| format!("failed to call {method} method on {interface}"))?
-      .body::<u32>()
+      .body()
+      .deserialize::<u32>()
       .context("failed to deserialize D-Bus message body")?;
 
     debug!(id = msg_id, "sent notification");
@@ -252,20 +253,13 @@ async fn wait_for_action_signal(connection: &Connection, interface: &str, id: u3
 
   while let Some(result) = MessageStream::from(connection).next().await {
     let message = result.context("failed to retrieve D-Bus message")?;
-    let header = message
-      .header()
-      .context("failed to retrieve D-Bus message header")?;
-    if let MessageType::Signal = header
-      .message_type()
-      .context("failed to inquire D-Bus message type")?
-    {
-      match header
-        .member()
-        .context("failed to get D-Bus message header member")?
-      {
+    let header = message.header();
+    if let MessageType::Signal = header.message_type() {
+      match header.member() {
         Some(name) if name == "ActionInvoked" => {
           let (nid, _action) = message
-            .body::<(u32, String)>()
+            .body()
+            .deserialize::<(u32, String)>()
             .context("failed to deserialize D-Bus message body")?;
           if nid == id {
             break
@@ -273,7 +267,8 @@ async fn wait_for_action_signal(connection: &Connection, interface: &str, id: u3
         },
         Some(name) if name == "NotificationClosed" => {
           let (nid, _reason) = message
-            .body::<(u32, u32)>()
+            .body()
+            .deserialize::<(u32, u32)>()
             .context("failed to deserialize D-Bus message body")?;
           if nid == id {
             break
