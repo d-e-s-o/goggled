@@ -49,19 +49,19 @@ use x11_dl::xlib::XA_ATOM;
 use x11_dl::xlib::XA_WINDOW;
 use x11_dl::xss::Xss as XScreenSaver;
 
+use zbus::connection::Builder as ConnectionBuilder;
+use zbus::connection::Connection;
 use zbus::export::futures_util::future::select;
 use zbus::export::futures_util::future::Either;
 use zbus::export::futures_util::FutureExt as _;
 use zbus::export::futures_util::StreamExt as _;
 use zbus::fdo::DBusProxy;
+use zbus::message::Type as MessageType;
 use zbus::names::WellKnownName;
 use zbus::zvariant::Value;
 use zbus::Address;
-use zbus::Connection;
-use zbus::ConnectionBuilder;
 use zbus::MatchRule;
 use zbus::MessageStream;
-use zbus::MessageType;
 
 /// Our "pool" of message IDs. 0 is treated specially by the
 /// Notification service and, hence, intentionally not used.
