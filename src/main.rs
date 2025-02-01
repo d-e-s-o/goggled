@@ -1,3 +1,6 @@
+// Copyright (C) 2024-2025 Daniel Mueller <deso@posteo.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #![allow(clippy::let_unit_value)]
 
 use std::cmp::min;
@@ -87,20 +90,18 @@ fn parse_duration(s: &str) -> Result<Duration> {
 /// A program/daemon sending notifications when the user should take a
 /// break from staring at the screen.
 #[derive(Debug, Parser)]
-#[clap(version = env!("VERSION"))]
+#[command(version = env!("VERSION"))]
 pub struct Args {
   /// The duration that, if the user has been "goggling" for this long,
   /// we post a notification.
-  #[clap(long, default_value = "25m")]
-  #[arg(value_parser = parse_duration)]
+  #[arg(long, default_value = "25m", value_parser = parse_duration)]
   pub goggle_duration: Duration,
   /// The duration that, if the system has been idle for this long, we
   /// reset the "goggling" duration.
-  #[clap(long, default_value = "4m")]
-  #[arg(value_parser = parse_duration)]
+  #[arg(long, default_value = "4m", value_parser = parse_duration)]
   pub idle_reset_duration: Duration,
   /// Increase verbosity (can be supplied multiple times).
-  #[clap(short = 'v', long = "verbose", global = true, action = ArgAction::Count)]
+  #[arg(short = 'v', long = "verbose", global = true, action = ArgAction::Count)]
   pub verbosity: u8,
 }
 
