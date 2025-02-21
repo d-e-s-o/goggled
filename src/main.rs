@@ -28,6 +28,11 @@ use anyhow::Result;
 use clap::ArgAction;
 use clap::Parser;
 
+use futures_util::future::select;
+use futures_util::future::Either;
+use futures_util::FutureExt as _;
+use futures_util::StreamExt as _;
+
 use tokio::time::sleep;
 
 use tracing::debug;
@@ -54,10 +59,6 @@ use x11_dl::xss::Xss as XScreenSaver;
 
 use zbus::connection::Builder as ConnectionBuilder;
 use zbus::connection::Connection;
-use zbus::export::futures_util::future::select;
-use zbus::export::futures_util::future::Either;
-use zbus::export::futures_util::FutureExt as _;
-use zbus::export::futures_util::StreamExt as _;
 use zbus::fdo::DBusProxy;
 use zbus::message::Type as MessageType;
 use zbus::names::WellKnownName;
