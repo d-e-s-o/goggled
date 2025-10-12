@@ -469,7 +469,7 @@ fn is_fullscreen(window: Window) -> Result<bool> {
   );
 
   let hints = unsafe { slice::from_raw_parts(data.cast::<Atom>(), items_return as _) };
-  let fullscreen = hints.iter().any(|hint| *hint == fullscreen);
+  let fullscreen = hints.contains(&fullscreen);
 
   Ok(fullscreen)
 }
