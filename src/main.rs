@@ -84,25 +84,25 @@ fn parse_duration(s: &str) -> Result<Duration> {
     }
   }
 
-  Err(anyhow!("invalid duration provided: {}", s))
+  Err(anyhow!("invalid duration provided: {s}"))
 }
 
 
 /// A program/daemon sending notifications when the user should take a
 /// break from staring at the screen.
 #[derive(Debug, Parser)]
-#[command(version = env!("VERSION"))]
+#[clap(version = env!("VERSION"))]
 pub struct Args {
   /// The duration that, if the user has been "goggling" for this long,
   /// we post a notification.
-  #[arg(long, default_value = "25m", value_parser = parse_duration)]
+  #[clap(long, default_value = "25m", value_parser = parse_duration)]
   pub goggle_duration: Duration,
   /// The duration that, if the system has been idle for this long, we
   /// reset the "goggling" duration.
-  #[arg(long, default_value = "4m", value_parser = parse_duration)]
+  #[clap(long, default_value = "4m", value_parser = parse_duration)]
   pub idle_reset_duration: Duration,
   /// Increase verbosity (can be supplied multiple times).
-  #[arg(short = 'v', long = "verbose", global = true, action = ArgAction::Count)]
+  #[clap(short = 'v', long = "verbose", global = true, action = ArgAction::Count)]
   pub verbosity: u8,
 }
 
