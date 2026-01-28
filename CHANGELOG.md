@@ -1,5 +1,6 @@
 Unreleased
 ----------
+- Switch to using static X11 bindings via `x11` crate
 - Bumped `zbus` dependency to `5.0`
 
 

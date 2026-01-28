@@ -1,4 +1,4 @@
-// Copyright (C) 2024-2025 Daniel Mueller <deso@posteo.net>
+// Copyright (C) 2024-2026 Daniel Mueller <deso@posteo.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #![allow(clippy::let_unit_value)]
@@ -47,15 +47,24 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt::time::ChronoLocal;
 use tracing_subscriber::FmtSubscriber;
 
-use x11_dl::xlib::Atom;
-use x11_dl::xlib::Display;
-use x11_dl::xlib::Success;
-use x11_dl::xlib::Window;
-use x11_dl::xlib::XErrorEvent;
-use x11_dl::xlib::Xlib;
-use x11_dl::xlib::XA_ATOM;
-use x11_dl::xlib::XA_WINDOW;
-use x11_dl::xss::Xss as XScreenSaver;
+use x11::xlib::Atom;
+use x11::xlib::Display;
+use x11::xlib::Success;
+use x11::xlib::Window;
+use x11::xlib::XCloseDisplay;
+use x11::xlib::XDefaultRootWindow;
+use x11::xlib::XErrorEvent;
+use x11::xlib::XFree;
+use x11::xlib::XGetErrorText;
+use x11::xlib::XGetWindowProperty;
+use x11::xlib::XInternAtom;
+use x11::xlib::XOpenDisplay;
+use x11::xlib::XSetErrorHandler;
+use x11::xlib::XSetIOErrorHandler;
+use x11::xlib::XA_ATOM;
+use x11::xlib::XA_WINDOW;
+use x11::xss::XScreenSaverAllocInfo;
+use x11::xss::XScreenSaverQueryInfo;
 
 use zbus::connection::Builder as ConnectionBuilder;
 use zbus::connection::Connection;
@@ -107,19 +116,17 @@ pub struct Args {
 }
 
 
-struct OpenDisplay<'xlib> {
-  /// The `Xlib` instance we work with.
-  xlib: &'xlib Xlib,
+struct OpenDisplay {
   /// The opened display.
   display: NonNull<Display>,
 }
 
-impl<'xlib> OpenDisplay<'xlib> {
-  fn new(xlib: &'xlib Xlib) -> Result<Self> {
-    let display = unsafe { (xlib.XOpenDisplay)(null()) };
+impl OpenDisplay {
+  fn new() -> Result<Self> {
+    let display = unsafe { XOpenDisplay(null()) };
     let display = NonNull::new(display).context("failed to open X display")?;
 
-    let slf = Self { xlib, display };
+    let slf = Self { display };
     Ok(slf)
   }
 
@@ -128,29 +135,27 @@ impl<'xlib> OpenDisplay<'xlib> {
   }
 }
 
-impl Drop for OpenDisplay<'_> {
+impl Drop for OpenDisplay {
   fn drop(&mut self) {
-    let _result = unsafe { (self.xlib.XCloseDisplay)(self.display.as_ptr()) };
+    let _result = unsafe { XCloseDisplay(self.display.as_ptr()) };
   }
 }
 
 
-struct XGuard<'xlib, T> {
-  /// The `Xlib` instance we work with.
-  xlib: &'xlib Xlib,
+struct XGuard<T> {
   /// The data being guarded.
   data: *mut T,
 }
 
-impl<'xlib, T> XGuard<'xlib, T> {
-  fn new(xlib: &'xlib Xlib, data: *mut T) -> Self {
-    Self { xlib, data }
+impl<T> XGuard<T> {
+  fn new(data: *mut T) -> Self {
+    Self { data }
   }
 }
 
-impl<T> Drop for XGuard<'_, T> {
+impl<T> Drop for XGuard<T> {
   fn drop(&mut self) {
-    let _result = unsafe { (self.xlib.XFree)(self.data.cast()) };
+    let _result = unsafe { XFree(self.data.cast()) };
   }
 }
 
@@ -287,19 +292,17 @@ async fn wait_for_action_signal(connection: &Connection, interface: &str, id: u3
 
 
 fn query_idle_time() -> Result<Duration> {
-  let xlib = Xlib::open().context("failed to open xlib API")?;
-  let display = OpenDisplay::new(&xlib)?;
+  let display = OpenDisplay::new()?;
 
-  let xss = XScreenSaver::open().context("failed to open xscreensaver API")?;
-  let info = unsafe { (xss.XScreenSaverAllocInfo)() };
+  let info = unsafe { XScreenSaverAllocInfo() };
   ensure!(
     !info.is_null(),
     "XScreenSaverAllocInfo failed to allocate memory"
   );
-  let _guard = XGuard::new(&xlib, info);
+  let _guard = XGuard::new(info);
 
-  let root = unsafe { (xlib.XDefaultRootWindow)(display.as_ptr()) };
-  let result = unsafe { (xss.XScreenSaverQueryInfo)(display.as_ptr(), root, info) };
+  let root = unsafe { XDefaultRootWindow(display.as_ptr()) };
+  let result = unsafe { XScreenSaverQueryInfo(display.as_ptr(), root, info) };
   ensure!(result != 0, "failed to query screen saver information");
 
   let idle_ms = unsafe { (*info).idle };
@@ -312,12 +315,11 @@ fn query_idle_time() -> Result<Duration> {
 // For debugging matters, the result can be double checked from a shell
 // using `xprop -root 32x '\t$0' _NET_ACTIVE_WINDOW`.
 fn active_window() -> Result<Option<Window>> {
-  let xlib = Xlib::open().context("failed to open xlib API")?;
-  let display = OpenDisplay::new(&xlib)?;
+  let display = OpenDisplay::new()?;
 
   let only_if_exists = 0;
   let property = unsafe {
-    (xlib.XInternAtom)(
+    XInternAtom(
       display.as_ptr(),
       b"_NET_ACTIVE_WINDOW\0".as_slice().as_ptr().cast(),
       only_if_exists,
@@ -328,7 +330,7 @@ fn active_window() -> Result<Option<Window>> {
     "failed to retrieve X11 NET_ACTIVE_WINDOW atom"
   );
 
-  let root = unsafe { (xlib.XDefaultRootWindow)(display.as_ptr()) };
+  let root = unsafe { XDefaultRootWindow(display.as_ptr()) };
 
   let offset = 0;
   let length = 1;
@@ -341,7 +343,7 @@ fn active_window() -> Result<Option<Window>> {
   let mut data = null_mut();
 
   let result = unsafe {
-    (xlib.XGetWindowProperty)(
+    XGetWindowProperty(
       display.as_ptr(),
       root,
       property,
@@ -361,7 +363,7 @@ fn active_window() -> Result<Option<Window>> {
     "failed to retrieve X11 window property"
   );
   ensure!(!data.is_null(), "XGetWindowProperty return no data");
-  let _guard = XGuard::new(&xlib, data);
+  let _guard = XGuard::new(data);
 
   ensure!(
     type_return == XA_WINDOW,
@@ -388,12 +390,11 @@ fn active_window() -> Result<Option<Window>> {
 
 
 fn is_fullscreen(window: Window) -> Result<bool> {
-  let xlib = Xlib::open().context("failed to open xlib API")?;
-  let display = OpenDisplay::new(&xlib)?;
+  let display = OpenDisplay::new()?;
 
   let only_if_exists = 0;
   let fullscreen = unsafe {
-    (xlib.XInternAtom)(
+    XInternAtom(
       display.as_ptr(),
       b"_NET_WM_STATE_FULLSCREEN\0".as_slice().as_ptr().cast(),
       only_if_exists,
@@ -405,7 +406,7 @@ fn is_fullscreen(window: Window) -> Result<bool> {
   );
 
   let property = unsafe {
-    (xlib.XInternAtom)(
+    XInternAtom(
       display.as_ptr(),
       b"_NET_WM_STATE\0".as_slice().as_ptr().cast(),
       only_if_exists,
@@ -428,7 +429,7 @@ fn is_fullscreen(window: Window) -> Result<bool> {
   let mut data = null_mut();
 
   let result = unsafe {
-    (xlib.XGetWindowProperty)(
+    XGetWindowProperty(
       display.as_ptr(),
       window,
       property,
@@ -457,7 +458,7 @@ fn is_fullscreen(window: Window) -> Result<bool> {
   }
 
   ensure!(!data.is_null(), "XGetWindowProperty return no data");
-  let _guard = XGuard::new(&xlib, data);
+  let _guard = XGuard::new(data);
 
   ensure!(
     type_return == XA_ATOM,
@@ -477,12 +478,11 @@ fn is_fullscreen(window: Window) -> Result<bool> {
 
 fn init_xlib_error_handler() -> Result<()> {
   extern "C" fn error_handler(display: *mut Display, event: *mut XErrorEvent) -> i32 {
-    let xlib = Xlib::open().context("failed to open xlib API").unwrap();
     // TODO: Should use `MaybeUninit` here.
     let mut buf = [0u8; 1024];
     let event = unsafe { &*event };
     let _result = unsafe {
-      (xlib.XGetErrorText)(
+      XGetErrorText(
         display,
         event.error_code.into(),
         buf.as_mut_slice().as_mut_ptr().cast(),
@@ -512,10 +512,8 @@ fn init_xlib_error_handler() -> Result<()> {
     0
   }
 
-  let xlib = Xlib::open().context("failed to open xlib API")?;
-
-  let _prev = unsafe { (xlib.XSetErrorHandler)(Some(error_handler)) };
-  let _prev = unsafe { (xlib.XSetIOErrorHandler)(Some(io_error_handler)) };
+  let _prev = unsafe { XSetErrorHandler(Some(error_handler)) };
+  let _prev = unsafe { XSetIOErrorHandler(Some(io_error_handler)) };
 
   Ok(())
 }
