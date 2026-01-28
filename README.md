@@ -1,7 +1,7 @@
 [![pipeline](https://github.com/d-e-s-o/goggled/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/d-e-s-o/goggled/actions/workflows/test.yml)
 [![crates.io](https://img.shields.io/crates/v/goggled.svg)](https://crates.io/crates/goggled)
 
-goggled
+goggled <img src="var/logo_small.png" style="height:1em">
 =======
 
 - [Changelog](CHANGELOG.md)
