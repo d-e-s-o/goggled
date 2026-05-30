@@ -5,6 +5,7 @@
 
 use std::cmp::min;
 use std::collections::HashMap;
+use std::env::args_os;
 use std::env::var_os;
 use std::ffi::CStr;
 use std::fmt::Debug;
@@ -664,8 +665,7 @@ fn init_logging(verbosity: u8) -> Result<()> {
   Ok(())
 }
 
-fn main_impl() -> Result<()> {
-  let args = Args::parse();
+fn main_impl(args: Args) -> Result<()> {
   let () = init_logging(args.verbosity).context("failed to initialize logging infrastructure")?;
   let () = init_xlib_error_handler()?;
 
@@ -685,7 +685,17 @@ fn main_impl() -> Result<()> {
 }
 
 fn main() -> ExitCode {
-  main_impl()
+  let args = match Args::try_parse_from(args_os()) {
+    Ok(args) => args,
+    Err(err) => {
+      let _result = err.print();
+      return u8::try_from(err.exit_code())
+        .map(ExitCode::from)
+        .unwrap_or(ExitCode::FAILURE)
+    },
+  };
+
+  main_impl(args)
     .map(|_| ExitCode::SUCCESS)
     .map_err(|e| eprintln!("{e:?}"))
     .unwrap_or(ExitCode::FAILURE)
