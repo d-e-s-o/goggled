@@ -33,6 +33,7 @@ use futures_util::future::Either;
 use futures_util::FutureExt as _;
 use futures_util::StreamExt as _;
 
+use tokio::runtime::Builder as RuntimeBuilder;
 use tokio::time::sleep;
 
 use tracing::debug;
@@ -662,8 +663,7 @@ fn init_logging(verbosity: u8) -> Result<()> {
   Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
   let args = Args::parse();
   let () = init_logging(args.verbosity).context("failed to initialize logging infrastructure")?;
   let () = init_xlib_error_handler()?;
@@ -674,7 +674,13 @@ async fn main() -> Result<()> {
   );
 
   let mut daemon = Daemon::new(args.goggle_duration, args.idle_reset_duration);
-  daemon.run().await
+  let rt = RuntimeBuilder::new_current_thread()
+    .enable_io()
+    .enable_time()
+    .build()
+    .context("failed to instantiate async runtime")?;
+
+  rt.block_on(daemon.run())
 }
 
 
