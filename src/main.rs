@@ -617,34 +617,55 @@ impl Daemon {
   }
 }
 
+fn init_logging(verbosity: u8) -> Result<()> {
+  enum Filter {
+    Level(LevelFilter),
+    Env(String),
+  }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
-  let args = Args::parse();
-  let level = match args.verbosity {
-    0 => LevelFilter::WARN,
-    1 => LevelFilter::INFO,
-    2 => LevelFilter::DEBUG,
-    _ => LevelFilter::TRACE,
+  let filter = match verbosity {
+    0 => {
+      // Check if `RUST_LOG` is present and honor it if so.
+      if let Some(env) = var_os(EnvFilter::DEFAULT_ENV) {
+        let directive = env
+          .into_string()
+          .ok()
+          .with_context(|| format!("env var `{}` is not valid UTF-8", EnvFilter::DEFAULT_ENV))?;
+
+        Filter::Env(directive)
+      } else {
+        // Use 'warn' as the default level.
+        Filter::Level(LevelFilter::WARN)
+      }
+    },
+    1 => Filter::Level(LevelFilter::INFO),
+    2 => Filter::Level(LevelFilter::DEBUG),
+    _ => Filter::Level(LevelFilter::TRACE),
   };
 
   let builder =
     FmtSubscriber::builder().with_timer(ChronoLocal::new("%Y-%m-%dT%H:%M:%S%.3f%:z".to_string()));
+  match filter {
+    Filter::Level(level) => {
+      let subscriber = builder.with_max_level(level).finish();
+      let () =
+        set_global_subscriber(subscriber).with_context(|| "failed to set tracing subscriber")?;
+    },
+    Filter::Env(directive) => {
+      let subscriber = builder
+        .with_env_filter(EnvFilter::try_new(directive).context("invalid logging directive")?)
+        .finish();
+      let () =
+        set_global_subscriber(subscriber).with_context(|| "failed to set tracing subscriber")?;
+    },
+  }
+  Ok(())
+}
 
-  if let Some(directive) = var_os(EnvFilter::DEFAULT_ENV) {
-    let directive = directive
-      .to_str()
-      .with_context(|| format!("env var `{}` is not valid UTF-8", EnvFilter::DEFAULT_ENV))?;
-
-    let subscriber = builder.with_env_filter(EnvFilter::new(directive)).finish();
-    let () =
-      set_global_subscriber(subscriber).with_context(|| "failed to set tracing subscriber")?;
-  } else {
-    let subscriber = builder.with_max_level(level).finish();
-    let () =
-      set_global_subscriber(subscriber).with_context(|| "failed to set tracing subscriber")?;
-  };
-
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+  let args = Args::parse();
+  let () = init_logging(args.verbosity).context("failed to initialize logging infrastructure")?;
   let () = init_xlib_error_handler()?;
 
   debug!(

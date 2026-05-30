@@ -1,3 +1,9 @@
+Unreleased
+----------
+- Give preference to `-v` / `--verbosity` flag over `RUST_LOG` variable
+  for specifying verbosity
+
+
 0.1.2
 -----
 - Switch to using static X11 bindings via `x11` crate
