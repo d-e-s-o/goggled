@@ -11,6 +11,7 @@ use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::fmt::Result as FmtResult;
 use std::pin::pin;
+use std::process::ExitCode;
 use std::ptr::null;
 use std::ptr::null_mut;
 use std::ptr::NonNull;
@@ -663,7 +664,7 @@ fn init_logging(verbosity: u8) -> Result<()> {
   Ok(())
 }
 
-fn main() -> Result<()> {
+fn main_impl() -> Result<()> {
   let args = Args::parse();
   let () = init_logging(args.verbosity).context("failed to initialize logging infrastructure")?;
   let () = init_xlib_error_handler()?;
@@ -681,6 +682,13 @@ fn main() -> Result<()> {
     .context("failed to instantiate async runtime")?;
 
   rt.block_on(daemon.run())
+}
+
+fn main() -> ExitCode {
+  main_impl()
+    .map(|_| ExitCode::SUCCESS)
+    .map_err(|e| eprintln!("{e:?}"))
+    .unwrap_or(ExitCode::FAILURE)
 }
 
 
