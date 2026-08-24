@@ -21,7 +21,7 @@ env:
 
 jobs:
   test:
-    name: Build and test [${{ matrix.profile }}]
+    name: Build and test [${{ matrix.rust }}, ${{ matrix.profile }}]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
